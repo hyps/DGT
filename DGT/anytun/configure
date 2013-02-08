@@ -1,0 +1,339 @@
+#!/bin/sh
+#
+#  anytun
+#
+#  The secure anycast tunneling protocol (satp) defines a protocol used
+#  for communication between any combination of unicast and anycast
+#  tunnel endpoints.  It has less protocol overhead than IPSec in Tunnel
+#  mode and allows tunneling of every ETHER TYPE protocol (e.g.
+#  ethernet, ip, arp ...). satp directly includes cryptography and
+#  message authentication based on the methodes used by SRTP.  It is
+#  intended to deliver a generic, scaleable and secure solution for
+#  tunneling and relaying of packets of any protocol.
+#
+#
+#  Copyright (C) 2007-2009 Othmar Gsenger, Erwin Nindl,
+#                          Christian Pointner <satp@wirdorange.org>
+#
+#  This file is part of Anytun.
+#
+#  Anytun is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 3 of the License, or
+#  any later version.
+#
+#  Anytun is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with anytun.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+TARGET=`uname -s`
+
+EBUILD_COMPAT=0
+
+CXXFLAGS='-g -Wall -O2'
+LDFLAGS='-g -Wall -O2'
+CROSS_PREFIX=''
+
+CRYPTO_LIB='gcrypt'
+PASSPHRASE=1
+ROUTING=1
+
+PREFIX='/usr/local'
+BINDIR=''
+SBINDIR=''
+ETCDIR=''
+MANDIR=''
+INSTALLMANPAGE=1
+EXAMPLESDIR=''
+INSTALLEXAMPLES=1
+
+BOOST_PREFIX=''
+GCRYPT_PREFIX=''
+OPENSSL_PREFIX=''
+
+print_usage() {
+  echo "configure --help                    print this"
+  echo "          --target=<TARGET>         build target i.e. Linux (default: autodetect)"
+  echo "          --prefix=<PREFIX>         the installation prefix (default: /usr/local)"
+  echo "          --bindir=<DIR>            the path to the bin directory (default: $PREFIX/bin)"
+  echo "          --sbindir=<DIR>           the path to the sbin directory (default: $PREFIX/sbin)"
+  echo "          --sysconfdir=<DIR>        the path to the system configuration directory (default: $PREFIX/etc"
+  echo "          --mandir=<DIR>            the path to the system man pages (default: $PREFIX/share/man)"
+  echo "          --no-manpage              dont't install manpages"
+  echo "          --examplesdir=<DIR>       the path to the examples files (default: $PREFIX/share/examples)"
+  echo "          --no-examples             dont't install example files"
+  echo "          --use-ssl-crypto          use ssl crypto library instead of libgcrypt"
+  echo "          --no-crypto               disable crypto at all (only NULL cipher)"
+  echo "          --disable-passphrase      disable master key and salt passphrase"
+  echo "          --enable-passphrase       enable master key and salt passphrase"
+  echo "          --disable-routing         disable built-in routing capability"
+  echo "          --enable-routing          enable built-in routing capability"
+  echo "          --cross-prefix=<PREFIX>   add PREFIX to compiler calls"
+  echo "          --with-boost=<PREFIX>     don't use systemwide boost"
+  echo "          --with-gcrypt=<PREFIX>    don't use systemwide gcrypt"
+  echo "          --with-openssl=<PREFIX>   don't use systemwide openssl"
+}
+
+for arg
+do
+  case $arg in
+  --target=*)
+    TARGET=${arg#--target=}
+  ;;
+  --prefix=*)
+    PREFIX=${arg#--prefix=}
+  ;;
+  --bindir=*)
+    SBINDIR=${arg#--bindir=}
+  ;;
+  --sbindir=*)
+    SBINDIR=${arg#--sbindir=}
+  ;;
+  --sysconfdir=*)
+    ETCDIR=${arg#--sysconfdir=}
+  ;;
+  --mandir=*)
+    MANDIR=${arg#--mandir=}
+  ;;
+  --no-manpage)
+    INSTALLMANPAGE=0
+  ;;
+  --examplesdir=*)
+    EXAMPLESDIR=${arg#--examplesdir=}
+  ;;
+  --no-examples)
+    INSTALLEXAMPLES=0
+  ;;
+  --use-ssl-crypto)
+    CRYPTO_LIB='ssl'
+  ;;
+  --no-crypto)
+    CRYPTO_LIB='none'
+  ;;
+  --enable-passphrase)
+    PASSPHRASE=1
+  ;;
+  --disable-passphrase)
+    PASSPHRASE=0
+  ;;
+  --enable-routing)
+    ROUTING=1
+  ;;
+  --disable-routing)
+    ROUTING=0
+  ;;
+  --ebuild-compat)
+    EBUILD_COMPAT=1
+  ;;
+  --cross-prefix=*)
+    CROSS_PREFIX=${arg#--cross-prefix=}
+  ;;
+  --with-boost=*)
+    BOOST_PREFIX=${arg#--with-boost=}
+  ;;
+  --with-gcrypt=*)
+    GCRYPT_PREFIX=${arg#--with-gcrypt=}
+  ;;
+  --with-openssl=*)
+    OPENSSL_PREFIX=${arg#--with-openssl=}
+  ;;
+  --help)
+    print_usage
+    exit 0
+  ;;
+  *)
+    ERRORS="$ERRORS $arg"
+  ;;
+  esac
+done
+
+if [ -n "$ERRORS" ] && [ $EBUILD_COMPAT -ne 1 ]; then
+  for error in $ERRORS; do
+    echo "Unknown argument: $error"
+  done
+
+  print_usage
+  exit 1
+fi
+
+rm -f include.mk
+rm -f version.h
+case $TARGET in
+  Linux)
+    rm -f tunDevice.cpp
+    ln -sf linux/tunDevice.cpp
+    rm -f signalHandler.hpp
+    ln -sf posix/signalHandler.hpp
+    rm -f sysExec.hpp
+    ln -sf posix/sysExec.hpp
+    rm -f daemonService.h daemonService.cpp
+    ln -sf posix/posixDaemon.h daemonService.h
+    ln -sf posix/posixDaemon.cpp daemonService.cpp
+    echo "loading Linux specific TUN Device"
+    LDFLAGS=$LDFLAGS' -lboost_thread -lboost_serialization -lboost_system -lboost_date_time -lpthread'
+    LOG_TARGETS='-DLOG_SYSLOG -DLOG_FILE -DLOG_STDOUT'
+  ;;
+  OpenBSD|FreeBSD|NetBSD|GNU/kFreeBSD)
+    rm -f tunDevice.cpp
+    ln -sf bsd/tunDevice.cpp
+    rm -f signalHandler.hpp
+    ln -sf posix/signalHandler.hpp
+    rm -f sysExec.hpp
+    ln -sf posix/sysExec.hpp
+    rm -f daemonService.h daemonService.cpp
+    ln -sf posix/posixDaemon.h daemonService.h
+    ln -sf posix/posixDaemon.cpp daemonService.cpp
+    echo "loading BSD specific TUN Device"
+    CXXFLAGS=$CXXFLAGS' -I/usr/local/include'
+    LDFLAGS=$LDFLAGS' -L/usr/local/lib  -lboost_thread -lboost_serialization -lboost_system -lboost_date_time -lpthread'
+    LOG_TARGETS='-DLOG_SYSLOG -DLOG_FILE -DLOG_STDOUT'
+  ;;
+  mingw)
+    rm -f tunDevice.cpp
+    rm -f signalHandler.hpp
+    rm -f sysExec.hpp
+    rm -f daemonService.h daemonService.cpp
+    echo "loading Windows specific TUN Device"
+    CXXFLAGS=$CXXFLAGS' -DMINGW -D_WIN32_WINNT=0x0501 -DWIN32_LEAN_AND_MEAN -DBOOST_WINDOWS -fno-strict-aliasing -DBOOST_THREAD_USE_LIB'
+    LDFLAGS=$LDFLAGS'  -lboost_thread_win32 -lboost_serialization -lboost_system -lboost_date_time -lwsock32 -lws2_32'
+    LOG_TARGETS='-DWIN_EVENTLOG -DLOG_FILE -DLOG_STDOUT'
+  ;;
+  *)
+    echo "platform not supported"
+    exit 1
+  ;;
+esac
+
+CXXFLAGS="$CXXFLAGS $LOG_TARGETS"
+
+if [ -n "$BOOST_PREFIX" ]; then
+  CXXFLAGS="$CXXFLAGS -I\"$BOOST_PREFIX/include\""
+  LDFLAGS="$LDFLAGS -L\"$BOOST_PREFIX/lib\""
+fi
+
+case $CRYPTO_LIB in
+  gcrypt)
+    LDFLAGS=$LDFLAGS' -lgcrypt -lgpg-error'
+    if [ -n "$GCRYPT_PREFIX" ]; then
+      CXXFLAGS="$CXXFLAGS -I\"$GCRYPT_PREFIX/include\""
+      LDFLAGS="$LDFLAGS -L\"$GCRYPT_PREFIX/lib\""
+    fi
+    echo "using libgcrypt library"
+  ;;
+  ssl)
+    CXXFLAGS=$CXXFLAGS' -DUSE_SSL_CRYPTO'
+    LDFLAGS=$LDFLAGS' -lcrypto'
+    if [ -n "$OPENSSL_PREFIX" ]; then
+      CXXFLAGS="$CXXFLAGS -I\"$OPENSSL_PREFIX/include\""
+      LDFLAGS="$LDFLAGS -L\"$OPENSSL_PREFIX/lib\""
+    fi
+    echo "using ssl crypto library"
+  ;;
+  none)
+    CXXFLAGS=$CXXFLAGS' -DNO_CRYPT'
+    echo "disabling crypto"
+  ;;
+esac
+
+if [ $PASSPHRASE -eq 0 ]; then
+  CXXFLAGS=$CXXFLAGS' -DNO_PASSPHRASE'
+  echo "disabling master key and salt passphrase"
+fi
+
+if [ $ROUTING -eq 0 ]; then
+  CXXFLAGS=$CXXFLAGS' -DNO_ROUTING'
+  echo "disabling built-in routing capability"
+fi
+
+if [ -z "$BINDIR" ]; then
+  BINDIR=$PREFIX/bin
+fi
+
+if [ -z "$SBINDIR" ]; then
+  SBINDIR=$PREFIX/sbin
+fi
+
+if [ -z "$ETCDIR" ]; then
+  ETCDIR=$PREFIX/etc
+fi
+
+if [ -z "$MANDIR" ]; then
+  MANDIR=$PREFIX/share/man
+fi
+
+if [ -z "$EXAMPLESDIR" ]; then
+  EXAMPLESDIR=$PREFIX/share/examples
+fi
+
+cat > include.mk <<EOF
+# this file was created automatically
+# do not edit this file directly
+# use ./configure instead
+
+TARGET = $TARGET
+CXX = ${CROSS_PREFIX}g++
+CXXFLAGS = $CXXFLAGS
+LD = ${CROSS_PREFIX}g++
+LDFLAGS = $LDFLAGS
+STRIP = ${CROSS_PREFIX}strip
+INSTALL = install
+
+PREFIX := $PREFIX
+BINDIR := $BINDIR
+SBINDIR := $SBINDIR
+ETCDIR := $ETCDIR
+EOF
+
+if [ $CRYPTO_LIB = "none" ]; then
+  echo "NO_CRYPT_OBJ = 1" >> include.mk
+fi
+
+if [ $INSTALLMANPAGE -eq 1 ]; then
+  echo "MANDIR := $MANDIR" >> include.mk
+  echo "installing manpage"
+else
+  echo "not installing manpage"
+fi
+
+if [ $INSTALLEXAMPLES -eq 1 ]; then
+  echo "EXAMPLESDIR := $EXAMPLESDIR" >> include.mk
+  echo "installing example files"
+else
+  echo "not installing example files"
+fi
+
+VERSION=`cat ../version`
+if which svn >/dev/null; then
+  SVN_REV=`svn info 2> /dev/null | grep "^Revision: " | awk '{print($2)}'`
+  if [ -n "$SVN_REV" ]; then
+    VERSION="$VERSION (svn$SVN_REV)"
+  fi
+fi
+HOSTNAME=`hostname`
+DATE=`date +"%d.%m.%Y %H:%M:%S %Z"`
+
+cat > version.h <<EOF
+/*
+ * anytun version info
+ *
+ * this file was created automatically
+ * do not edit this file directly
+ * use ./configure instead
+ */
+
+#ifndef ANYTUN_version_h_INCLUDED
+#define ANYTUN_version_h_INCLUDED
+
+#define VERSION_STRING_0 " version $VERSION"
+#define VERSION_STRING_1 "built on $HOSTNAME, $DATE"
+
+#endif
+
+EOF
+
+exit 0
